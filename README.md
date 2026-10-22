@@ -23,7 +23,7 @@
 * **No Hallucination:** Unlike text-to-video AI prompts, Transvid stores exact spatial and temporal latent DNA, preserving identity, lighting, and textures.
 * **The `.tvid` Container:** Custom binary bitstream format with interleaved video/audio chunks, timestamp synchronization, and CRC32 integrity validation.
 * **Extreme Audio Compression:** Reduces audio by **30x–50x** using Residual Vector Quantization (RVQ) down to 1.5–6 kbps.
-* **Hardware Aware:** Designed to run with low VRAM footprint on consumer GPUs (e.g. RTX 4050 6GB) via chunked sliding-window processing.
+* **Hardware Aware:** Designed to run with low VRAM footprint on consumer GPUs via chunked sliding-window processing.
 
 ---
 
