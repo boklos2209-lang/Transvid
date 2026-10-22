@@ -186,8 +186,8 @@
       "degree": 6
     },
     {
-      "id": "tests_test_video_testvideolatentengine",
-      "label": "TestVideoLatentEngine",
+      "id": "tests_test_audio_testaudiolatentengine",
+      "label": "TestAudioLatentEngine",
       "degree": 5
     }
   ],
@@ -226,17 +226,6 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
     },
     {
-      "source": "TestVideoLatentEngine",
-      "target": "VideoLatentEngine",
-      "source_files": [
-        "tests/test_video.py",
-        "src/video.py"
-      ],
-      "confidence": "INFERRED",
-      "relation": "uses",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
-    },
-    {
       "source": "TestAudioLatentEngine",
       "target": "AudioLatentEngine",
       "source_files": [
@@ -246,10 +235,54 @@
       "confidence": "INFERRED",
       "relation": "uses",
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    },
+    {
+      "source": "TestVideoLatentEngine",
+      "target": "VideoLatentEngine",
+      "source_files": [
+        "tests/test_video.py",
+        "src/video.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
     }
   ],
-  "tokens": {
-    "input": 0,
-    "output": 0
-  }
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `AudioLatentEngine` connect `StreamMetadata` to `TvidWriter`, `container.py`, `test_container.py`, `VideoLatentEngine`, `cli.py`?",
+      "why": "High betweenness centrality (0.222) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 2 inferred relationships involving `AudioLatentEngine` (e.g. with `VideoLatentEngine` and `TestAudioLatentEngine`) actually correct?",
+      "why": "`AudioLatentEngine` has 2 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `transvid` to the rest of the system?",
+      "why": "1 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `TvidWriter` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.12318840579710146 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `VideoLatentEngine` connect `VideoLatentEngine` to `TvidWriter`, `container.py`, `StreamMetadata`, `test_container.py`, `cli.py`?",
+      "why": "High betweenness centrality (0.178) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 2 inferred relationships involving `VideoLatentEngine` (e.g. with `AudioLatentEngine` and `TestVideoLatentEngine`) actually correct?",
+      "why": "`VideoLatentEngine` has 2 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `StreamMetadata` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.14619883040935672 - nodes in this community are weakly interconnected."
+    }
+  ]
 }
