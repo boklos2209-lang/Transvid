@@ -1,0 +1,39 @@
+# Python virtual environments & bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI / Neural model weights and caches
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+.cache/
+
+# Media test files (keep repo small for GitHub)
+*.mp4
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.flac
+*.tvid
+test_output*
+sample_*
+
+# Graphify build outputs
+graphify-out/cache/
+graphify-out/.graphify_*
