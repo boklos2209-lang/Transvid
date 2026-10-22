@@ -65,9 +65,9 @@ class AudioLatentEngine:
         # Resample and convert to mono 24kHz required by EnCodec 24kHz model
         wav_24k = convert_audio(
             wav,
-            from_rate=sample_rate,
-            to_rate=self.model.sample_rate,
-            to_channels=self.model.channels,
+            sr=sample_rate,
+            target_sr=self.model.sample_rate,
+            target_channels=self.model.channels,
         ).to(self.device)
 
         with torch.inference_mode():
