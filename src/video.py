@@ -2,13 +2,17 @@
 Video Latent Engine for Transvid
 --------------------------------
 Compresses video frames into compact spatio-temporal latent representations
-using pure PyTorch TAESD (Tiny AutoEncoder for Stable Diffusion) with
-pretrained weights, int8 quantization, and temporal delta coding.
-
-Zero heavy dependencies (no diffusers/torchao required).
+using pure PyTorch TAESD (Tiny AutoEncoder for Stable Diffusion) with:
+- Audiovisual stream multiplexing (video + audio in one .tvid container)
+- Temporal delta coding with dead-zone noise gating
+- Static frame skipping (1-byte repeat tokens for static scenes)
+- Subprocess FFmpeg remuxing on decompression
 """
 
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -98,10 +102,10 @@ def build_decoder(latent_channels: int = 4) -> nn.Sequential:
 class VideoLatentEngine:
     """
     Manages video frame extraction, neural latent encoding via pure PyTorch TAESD,
-    and photorealistic neural reconstruction.
+    audio stream extraction, and synchronized audiovisual neural reconstruction.
     """
 
-    def __init__(self, device: Optional[str] = None, gop_size: int = 16):
+    def __init__(self, device: Optional[str] = None, gop_size: int = 32):
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
@@ -147,8 +151,29 @@ class VideoLatentEngine:
         """Dequantizes int8 latent back to float32."""
         return (quantized.astype(np.float32) * scale).astype(np.float32)
 
+    def _extract_audio_from_video(self, video_path: str) -> Optional[Tuple[torch.Tensor, int]]:
+        """Extracts audio track from video if available using FFmpeg."""
+        if shutil.which("ffmpeg"):
+            fd, tmp_audio = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            try:
+                cmd = [
+                    "ffmpeg", "-y", "-i", video_path,
+                    "-vn", "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1",
+                    tmp_audio
+                ]
+                ret = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if ret.returncode == 0 and os.path.exists(tmp_audio) and os.path.getsize(tmp_audio) > 1000:
+                    import torchaudio
+                    wav, sr = torchaudio.load(tmp_audio)
+                    return wav, sr
+            finally:
+                if os.path.exists(tmp_audio):
+                    os.remove(tmp_audio)
+        return None
+
     def compress_video(self, input_video_path: str, output_tvid_path: str):
-        """Encodes an MP4/video file into .tvid format using spatio-temporal latents."""
+        """Encodes an MP4/video file into .tvid format with synchronized audio + video."""
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
             raise ValueError(f"Could not open input video '{input_video_path}'")
@@ -180,10 +205,36 @@ class VideoLatentEngine:
             duration_seconds=(total_frames / fps) if fps > 0 else 0.0,
         )
 
+        # Check for audio track
+        audio_data = self._extract_audio_from_video(input_video_path)
+        audio_tokens_payload: Optional[bytes] = None
+
+        if audio_data is not None:
+            from src.audio import AudioLatentEngine
+            wav, sr = audio_data
+            a_engine = AudioLatentEngine(device=self.device, target_bandwidth=6.0)
+            tokens, orig_sr, a_dur = a_engine.encode_waveform(wav, sr)
+            num_codebooks, time_steps = tokens.shape
+
+            meta.has_audio = True
+            meta.audio_codec = "encodec-24khz"
+            meta.sample_rate = sr
+            meta.channels = 1
+            meta.codebook_count = num_codebooks
+            meta.tokens_per_second = int(time_steps / max(a_dur, 0.001))
+
+            shape_header = np.array([num_codebooks, time_steps], dtype=np.uint32).tobytes()
+            audio_tokens_payload = shape_header + tokens.tobytes()
+            print(f"[+] Extracted & neural-encoded soundtrack: {time_steps} audio steps.")
+
         writer = TvidWriter(meta)
+
+        if audio_tokens_payload is not None:
+            writer.add_audio_chunk(timestamp_ms=0, raw_token_bytes=audio_tokens_payload, compress=True)
 
         frame_idx = 0
         prev_latent: Optional[np.ndarray] = None
+        skipped_frames = 0
 
         print(f"[*] Encoding video frames ({width}x{height} @ {fps:.1f} FPS, total: {total_frames})...")
 
@@ -216,12 +267,26 @@ class VideoLatentEngine:
                 # Keyframe (I-Frame): store full latent
                 target_latent = latent
                 frame_type = 0
+                prev_latent = latent
             else:
-                # Delta frame (P-Frame): store temporal difference
-                target_latent = latent - prev_latent
-                frame_type = 1
+                # Delta frame (P-Frame): calculate difference
+                diff = latent - prev_latent
+                mean_abs_diff = float(np.mean(np.abs(diff)))
 
-            prev_latent = latent
+                # Static frame detection: if frame barely changed, write a 1-byte SKIP token!
+                if mean_abs_diff < 0.012:
+                    frame_type = 2  # SKIP_FRAME
+                    chunk_payload = bytes([frame_type])
+                    writer.add_video_chunk(timestamp_ms=timestamp_ms, raw_latent_bytes=chunk_payload, compress=False)
+                    frame_idx += 1
+                    skipped_frames += 1
+                    continue
+                else:
+                    # Noise gating (dead-zone): clamp tiny sensor jitter to zero for maximum compression
+                    gated_diff = np.where(np.abs(diff) < 0.04, 0.0, diff)
+                    target_latent = gated_diff
+                    frame_type = 1
+                    prev_latent = latent
 
             quantized, scale = self._quantize_latent(target_latent)
 
@@ -235,10 +300,10 @@ class VideoLatentEngine:
 
         cap.release()
         writer.write_to_file(output_tvid_path)
-        print(f"[+] Compressed {frame_idx} video frames into '{output_tvid_path}'.")
+        print(f"[+] Compressed {frame_idx} video frames (Skipped/Zero-Cost: {skipped_frames}) into '{output_tvid_path}'.")
 
     def decompress_video(self, input_tvid_path: str, output_video_path: str):
-        """Reconstructs full-resolution video from a .tvid container."""
+        """Reconstructs full-resolution video + audio from a .tvid container."""
         reader = TvidReader(input_tvid_path)
         if not reader.metadata.has_video or not reader.video_chunks:
             raise ValueError(f"No video stream found in {input_tvid_path}")
@@ -248,27 +313,34 @@ class VideoLatentEngine:
         fps = meta.fps
         latent_shape = tuple(meta.latent_shape)
 
-        # Initialize video writer with mp4v codec
+        # Temporary video file for visual frames
+        fd_v, temp_video_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd_v)
+
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
 
         prev_latent: Optional[np.ndarray] = None
         print(f"[*] Decompressing {len(reader.video_chunks)} video frames into '{output_video_path}'...")
 
         for chunk_idx, (timestamp_ms, raw_chunk) in enumerate(reader.video_chunks):
             frame_type = raw_chunk[0]
-            scale = np.frombuffer(raw_chunk[1:5], dtype=np.float32)[0]
-            quantized_bytes = raw_chunk[5:]
 
-            quantized = np.frombuffer(quantized_bytes, dtype=np.int8).reshape(latent_shape)
-            latent = self._dequantize_latent(quantized, scale)
+            if frame_type == 2:  # SKIP_FRAME: reuse previous frame
+                curr_latent = prev_latent
+            else:
+                scale = np.frombuffer(raw_chunk[1:5], dtype=np.float32)[0]
+                quantized_bytes = raw_chunk[5:]
 
-            if frame_type == 0:  # Keyframe
-                curr_latent = latent
-            else:  # Delta frame
-                curr_latent = prev_latent + latent
+                quantized = np.frombuffer(quantized_bytes, dtype=np.int8).reshape(latent_shape)
+                latent = self._dequantize_latent(quantized, scale)
 
-            prev_latent = curr_latent
+                if frame_type == 0:  # Keyframe
+                    curr_latent = latent
+                else:  # Delta frame
+                    curr_latent = prev_latent + latent
+
+                prev_latent = curr_latent
 
             # Pass through pure PyTorch neural decoder
             latent_tensor = torch.from_numpy(curr_latent).unsqueeze(0).to(self.device)
@@ -289,4 +361,47 @@ class VideoLatentEngine:
             out.write(rec_bgr)
 
         out.release()
-        print(f"[+] Reconstructed video written to '{output_video_path}'.")
+
+        # If container has audio, decode audio and multiplex with FFmpeg
+        temp_audio_path: Optional[str] = None
+        if meta.has_audio and reader.audio_chunks:
+            from src.audio import AudioLatentEngine
+            a_engine = AudioLatentEngine(device=self.device)
+            fd_a, temp_audio_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd_a)
+
+            full_payload = reader.audio_chunks[0][1]
+            num_codebooks, time_steps = np.frombuffer(full_payload[:8], dtype=np.uint32)
+            raw_tokens_bytes = full_payload[8:]
+
+            tokens = np.frombuffer(raw_tokens_bytes, dtype=np.uint16).reshape((num_codebooks, time_steps))
+            rec_wav, model_sr = a_engine.decode_tokens(tokens)
+            import torchaudio
+            torchaudio.save(temp_audio_path, rec_wav, model_sr)
+            print("[+] Decoded audio soundtrack.")
+
+        # Remux video + audio together using FFmpeg
+        if temp_audio_path and os.path.exists(temp_audio_path) and shutil.which("ffmpeg"):
+            print("[*] Multiplexing video and audio streams via FFmpeg...")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", temp_video_path,
+                "-i", temp_audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                output_video_path
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                os.remove(temp_video_path)
+                os.remove(temp_audio_path)
+            except OSError:
+                pass
+        else:
+            # No audio or no ffmpeg - copy temp_video to output
+            if os.path.exists(output_video_path):
+                os.remove(output_video_path)
+            shutil.move(temp_video_path, output_video_path)
+
+        print(f"[+] Reconstructed audiovisual video written to '{output_video_path}'.")
