@@ -2,61 +2,25 @@
 Video Latent Engine for Transvid
 --------------------------------
 Compresses video frames into compact spatio-temporal latent representations
-using multi-scale autoencoders, int8 quantization, and temporal delta coding.
+using pretrained Tiny AutoEncoder (TAESD), int8 quantization, and temporal delta coding.
 """
 
 import os
-from typing import Generator, List, Optional, Tuple
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from diffusers import AutoencoderTiny
 
 from src.container import StreamMetadata, TvidReader, TvidWriter
 
 
-class VideoLatentAutoencoder(nn.Module):
-    """
-    Spatio-Temporal Convolutional Video Autoencoder.
-    Downsamples spatial resolution by 8x (e.g. 512x512 -> 64x64) into
-    a compact 4-channel latent feature space.
-    """
-
-    def __init__(self, in_channels: int = 3, latent_channels: int = 4):
-        super().__init__()
-        # Encoder: 3 -> 32 -> 64 -> 128 -> latent_channels (4)
-        self.enc_conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1)  # 2x down
-        self.enc_conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)           # 4x down
-        self.enc_conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)          # 8x down
-        self.enc_out = nn.Conv2d(128, latent_channels, kernel_size=3, stride=1, padding=1)
-
-        # Decoder: latent_channels (4) -> 128 -> 64 -> 32 -> 3
-        self.dec_in = nn.Conv2d(latent_channels, 128, kernel_size=3, stride=1, padding=1)
-        self.dec_conv1 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1) # 4x up
-        self.dec_conv2 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)  # 2x up
-        self.dec_conv3 = nn.ConvTranspose2d(32, in_channels, kernel_size=4, stride=2, padding=1) # 1x up
-
-    def encode(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, 3, H, W] in [-1, 1] -> z: [B, 4, H/8, W/8]"""
-        h = F.relu(self.enc_conv1(x))
-        h = F.relu(self.enc_conv2(h))
-        h = F.relu(self.enc_conv3(h))
-        z = self.enc_out(h)
-        return z
-
-    def decode(self, z: torch.Tensor) -> torch.Tensor:
-        """z: [B, 4, H/8, W/8] -> x_rec: [B, 3, H, W] in [-1, 1]"""
-        h = F.relu(self.dec_in(z))
-        h = F.relu(self.dec_conv1(h))
-        h = F.relu(self.dec_conv2(h))
-        x_rec = torch.tanh(self.dec_conv3(h))
-        return x_rec
-
-
 class VideoLatentEngine:
-    """Manages video frame extraction, latent compression, and neural reconstruction."""
+    """
+    Manages video frame extraction, neural latent encoding via pretrained TAESD,
+    and photorealistic neural reconstruction.
+    """
 
     def __init__(self, device: Optional[str] = None, gop_size: int = 16):
         if device is None:
@@ -65,7 +29,8 @@ class VideoLatentEngine:
             self.device = device
 
         self.gop_size = gop_size  # Group of Pictures: 1 Keyframe every gop_size frames
-        self.model = VideoLatentAutoencoder().to(self.device)
+        # Load lightweight 10MB pretrained VAE for photorealistic visual reconstruction
+        self.model = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(self.device)
         self.model.eval()
 
     def _quantize_latent(self, latent: np.ndarray) -> Tuple[np.ndarray, float]:
@@ -79,7 +44,7 @@ class VideoLatentEngine:
         """Dequantizes int8 latent back to float32."""
         return (quantized.astype(np.float32) * scale).astype(np.float32)
 
-    def compress_video(self, input_video_path: str, output_tvid_path: str, batch_size: int = 16):
+    def compress_video(self, input_video_path: str, output_tvid_path: str):
         """Encodes an MP4/video file into .tvid format using spatio-temporal latents."""
         cap = cv2.VideoCapture(input_video_path)
         if not cap.isOpened():
@@ -103,7 +68,7 @@ class VideoLatentEngine:
 
         meta = StreamMetadata(
             has_video=True,
-            video_codec="transvid-vae-v1",
+            video_codec="taesd-vae-v1",
             width=width,
             height=height,
             fps=fps,
@@ -132,13 +97,13 @@ class VideoLatentEngine:
                     frame_rgb, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=[0, 0, 0]
                 )
 
-            # Normalize to [-1, 1] and convert to tensor [1, 3, H, W]
+            # Normalize to [0, 1] as expected by TAESD and convert to tensor [1, 3, H, W]
             frame_tensor = (
-                torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float() / 127.5 - 1.0
+                torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float() / 255.0
             ).to(self.device)
 
             with torch.inference_mode():
-                latent_tensor = self.model.encode(frame_tensor)
+                latent_tensor = self.model.encode(frame_tensor).latents
                 latent = latent_tensor.squeeze(0).cpu().numpy()  # [4, H/8, W/8]
 
             timestamp_ms = int((frame_idx / fps) * 1000)
@@ -180,7 +145,7 @@ class VideoLatentEngine:
         fps = meta.fps
         latent_shape = tuple(meta.latent_shape)
 
-        # Initialize video writer
+        # Initialize video writer with mp4v codec
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
@@ -202,15 +167,14 @@ class VideoLatentEngine:
 
             prev_latent = curr_latent
 
-            # Pass through neural decoder
+            # Pass through pretrained neural decoder
             latent_tensor = torch.from_numpy(curr_latent).unsqueeze(0).to(self.device)
             with torch.inference_mode():
-                rec_tensor = self.model.decode(latent_tensor)
+                rec_tensor = self.model.decode(latent_tensor).sample
 
-            # Convert from [-1, 1] tensor back to [0, 255] uint8 RGB image
+            # Convert from [0, 1] tensor back to [0, 255] uint8 RGB image
             rec_frame = (
-                ((rec_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy() + 1.0) * 127.5)
-                .clip(0, 255)
+                (rec_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().clip(0, 1) * 255.0)
                 .astype(np.uint8)
             )
 
