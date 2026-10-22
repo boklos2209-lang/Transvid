@@ -2,23 +2,102 @@
 Video Latent Engine for Transvid
 --------------------------------
 Compresses video frames into compact spatio-temporal latent representations
-using pretrained Tiny AutoEncoder (TAESD), int8 quantization, and temporal delta coding.
+using pure PyTorch TAESD (Tiny AutoEncoder for Stable Diffusion) with
+pretrained weights, int8 quantization, and temporal delta coding.
+
+Zero heavy dependencies (no diffusers/torchao required).
 """
 
 import os
+from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 import torch
-from diffusers import AutoencoderTiny
+import torch.nn as nn
+from torch.hub import download_url_to_file
 
 from src.container import StreamMetadata, TvidReader, TvidWriter
+
+TAESD_ENCODER_URL = "https://github.com/madebyollin/taesd/raw/main/taesd_encoder.pth"
+TAESD_DECODER_URL = "https://github.com/madebyollin/taesd/raw/main/taesd_decoder.pth"
+
+
+def conv(n_in: int, n_out: int, **kwargs):
+    return nn.Conv2d(n_in, n_out, 3, padding=1, **kwargs)
+
+
+class Clamp(nn.Module):
+    def forward(self, x):
+        return torch.tanh(x / 3) * 3
+
+
+class ResBlock(nn.Module):
+    def __init__(self, n_in: int, n_out: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            conv(n_in, n_out),
+            nn.ReLU(),
+            conv(n_out, n_out),
+            nn.ReLU(),
+            conv(n_out, n_out),
+        )
+        self.skip = nn.Conv2d(n_in, n_out, 1, bias=False) if n_in != n_out else nn.Identity()
+        self.fuse = nn.ReLU()
+
+    def forward(self, x):
+        return self.fuse(self.conv(x) + self.skip(x))
+
+
+def build_encoder(latent_channels: int = 4) -> nn.Sequential:
+    return nn.Sequential(
+        conv(3, 64),
+        ResBlock(64, 64),
+        conv(64, 64, stride=2, bias=False),  # 2x down
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        conv(64, 64, stride=2, bias=False),  # 4x down
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        conv(64, 64, stride=2, bias=False),  # 8x down
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        conv(64, latent_channels),
+    )
+
+
+def build_decoder(latent_channels: int = 4) -> nn.Sequential:
+    return nn.Sequential(
+        Clamp(),
+        conv(latent_channels, 64),
+        nn.ReLU(),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        nn.Upsample(scale_factor=2),
+        conv(64, 64, bias=False),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        nn.Upsample(scale_factor=2),
+        conv(64, 64, bias=False),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        ResBlock(64, 64),
+        nn.Upsample(scale_factor=2),
+        conv(64, 64, bias=False),
+        ResBlock(64, 64),
+        conv(64, 3),
+    )
 
 
 class VideoLatentEngine:
     """
-    Manages video frame extraction, neural latent encoding via pretrained TAESD,
+    Manages video frame extraction, neural latent encoding via pure PyTorch TAESD,
     and photorealistic neural reconstruction.
     """
 
@@ -28,10 +107,34 @@ class VideoLatentEngine:
         else:
             self.device = device
 
-        self.gop_size = gop_size  # Group of Pictures: 1 Keyframe every gop_size frames
-        # Load lightweight 10MB pretrained VAE for photorealistic visual reconstruction
-        self.model = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(self.device)
-        self.model.eval()
+        self.gop_size = gop_size
+
+        # Build models
+        self.encoder = build_encoder(latent_channels=4).to(self.device)
+        self.decoder = build_decoder(latent_channels=4).to(self.device)
+
+        self._load_pretrained_weights()
+
+        self.encoder.eval()
+        self.decoder.eval()
+
+    def _load_pretrained_weights(self):
+        cache_dir = Path.home() / ".cache" / "transvid"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        enc_path = cache_dir / "taesd_encoder.pth"
+        dec_path = cache_dir / "taesd_decoder.pth"
+
+        if not enc_path.exists():
+            print("[*] Downloading TAESD pretrained video encoder weights (4.7 MB)...")
+            download_url_to_file(TAESD_ENCODER_URL, str(enc_path))
+
+        if not dec_path.exists():
+            print("[*] Downloading TAESD pretrained video decoder weights (4.7 MB)...")
+            download_url_to_file(TAESD_DECODER_URL, str(dec_path))
+
+        self.encoder.load_state_dict(torch.load(str(enc_path), map_location=self.device, weights_only=True))
+        self.decoder.load_state_dict(torch.load(str(dec_path), map_location=self.device, weights_only=True))
 
     def _quantize_latent(self, latent: np.ndarray) -> Tuple[np.ndarray, float]:
         """Quantizes continuous float32/float16 latent to int8."""
@@ -68,7 +171,7 @@ class VideoLatentEngine:
 
         meta = StreamMetadata(
             has_video=True,
-            video_codec="taesd-vae-v1",
+            video_codec="taesd-pure-v1",
             width=width,
             height=height,
             fps=fps,
@@ -97,13 +200,13 @@ class VideoLatentEngine:
                     frame_rgb, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=[0, 0, 0]
                 )
 
-            # Normalize to [0, 1] as expected by TAESD and convert to tensor [1, 3, H, W]
+            # Normalize to [0, 1] and convert to tensor [1, 3, H, W]
             frame_tensor = (
                 torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float() / 255.0
             ).to(self.device)
 
             with torch.inference_mode():
-                latent_tensor = self.model.encode(frame_tensor).latents
+                latent_tensor = self.encoder(frame_tensor)
                 latent = latent_tensor.squeeze(0).cpu().numpy()  # [4, H/8, W/8]
 
             timestamp_ms = int((frame_idx / fps) * 1000)
@@ -112,11 +215,11 @@ class VideoLatentEngine:
             if is_keyframe:
                 # Keyframe (I-Frame): store full latent
                 target_latent = latent
-                frame_type = 0  # Keyframe
+                frame_type = 0
             else:
                 # Delta frame (P-Frame): store temporal difference
                 target_latent = latent - prev_latent
-                frame_type = 1  # Delta frame
+                frame_type = 1
 
             prev_latent = latent
 
@@ -167,10 +270,10 @@ class VideoLatentEngine:
 
             prev_latent = curr_latent
 
-            # Pass through pretrained neural decoder
+            # Pass through pure PyTorch neural decoder
             latent_tensor = torch.from_numpy(curr_latent).unsqueeze(0).to(self.device)
             with torch.inference_mode():
-                rec_tensor = self.model.decode(latent_tensor).sample
+                rec_tensor = self.decoder(latent_tensor)
 
             # Convert from [0, 1] tensor back to [0, 255] uint8 RGB image
             rec_frame = (
