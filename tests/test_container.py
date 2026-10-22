@@ -71,6 +71,34 @@ class TestTvidContainer(unittest.TestCase):
             if os.path.exists(out_path):
                 os.remove(out_path)
 
+    def test_audio_tokens_packing_roundtrip(self):
+        from src.container import pack_audio_tokens, unpack_audio_tokens
+        import numpy as np
+
+        tokens = np.random.randint(0, 1024, size=(8, 150), dtype=np.uint16)
+        packed = pack_audio_tokens(tokens)
+        unpacked = unpack_audio_tokens(packed)
+
+        self.assertEqual(unpacked.shape, (8, 150))
+        self.assertTrue(np.array_equal(tokens, unpacked))
+
+    def test_uncompressed_chunk_roundtrip(self):
+        meta = StreamMetadata(has_video=True)
+        writer = TvidWriter(meta)
+        raw_skip = bytes([2])  # 1-byte SKIP frame
+        writer.add_video_chunk(timestamp_ms=0, raw_latent_bytes=raw_skip, compress=False)
+
+        out_path = "test_uncompressed.tvid"
+        try:
+            writer.write_to_file(out_path)
+            reader = TvidReader(out_path)
+            self.assertEqual(len(reader.video_chunks), 1)
+            self.assertEqual(reader.video_chunks[0][1], raw_skip)
+        finally:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+
+
     def test_corrupted_crc_detection(self):
         meta = StreamMetadata(has_video=False, has_audio=False)
         writer = TvidWriter(meta)

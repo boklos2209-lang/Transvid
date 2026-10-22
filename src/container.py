@@ -32,11 +32,65 @@ import zlib
 from dataclasses import asdict, dataclass
 from typing import BinaryIO, Dict, List, Optional, Tuple
 
+import numpy as np
+
+try:
+    import zstandard as zstd
+    HAS_ZSTD = True
+except ImportError:
+    HAS_ZSTD = False
+
 MAGIC = b"TVID"
 CURRENT_VERSION = 1
 
 FLAG_HAS_VIDEO = 1 << 0
 FLAG_HAS_AUDIO = 1 << 1
+FLAG_COMPRESSION_ZSTD = 1 << 2
+
+
+def compress_payload(raw_bytes: bytes, level: int = 6) -> bytes:
+    """Compresses chunk payload with Zstandard if available, else zlib."""
+    if HAS_ZSTD:
+        cctx = zstd.ZstdCompressor(level=level)
+        return cctx.compress(raw_bytes)
+    return zlib.compress(raw_bytes, level=level)
+
+
+def decompress_payload(payload: bytes) -> bytes:
+    """
+    Decompresses chunk payload, auto-detecting Zstandard, zlib, or uncompressed raw data.
+    """
+    if len(payload) <= 1:
+        return payload
+
+    if HAS_ZSTD and payload.startswith(b"\x28\xb5\x2f\xfd"):
+        try:
+            dctx = zstd.ZstdDecompressor()
+            return dctx.decompress(payload)
+        except Exception:
+            pass
+
+    if payload[0] == 0x78:
+        try:
+            return zlib.decompress(payload)
+        except Exception:
+            pass
+
+    return payload
+
+
+def pack_audio_tokens(tokens: np.ndarray) -> bytes:
+    """Packs 2D uint16 audio token array into byte payload with shape header."""
+    num_codebooks, time_steps = tokens.shape
+    shape_header = np.array([num_codebooks, time_steps], dtype=np.uint32).tobytes()
+    return shape_header + tokens.astype(np.uint16).tobytes()
+
+
+def unpack_audio_tokens(payload: bytes) -> np.ndarray:
+    """Unpacks byte payload with shape header into 2D uint16 audio token array."""
+    num_codebooks, time_steps = np.frombuffer(payload[:8], dtype=np.uint32)
+    raw_tokens_bytes = payload[8:]
+    return np.frombuffer(raw_tokens_bytes, dtype=np.uint16).reshape((num_codebooks, time_steps))
 
 
 @dataclass
@@ -78,11 +132,11 @@ class TvidWriter:
         self.chunks: List[Chunk] = []
 
     def add_video_chunk(self, timestamp_ms: int, raw_latent_bytes: bytes, compress: bool = True):
-        payload = zlib.compress(raw_latent_bytes, level=6) if compress else raw_latent_bytes
+        payload = compress_payload(raw_latent_bytes) if compress else raw_latent_bytes
         self.chunks.append(Chunk(stream_id=0, timestamp_ms=timestamp_ms, data=payload))
 
     def add_audio_chunk(self, timestamp_ms: int, raw_token_bytes: bytes, compress: bool = True):
-        payload = zlib.compress(raw_token_bytes, level=6) if compress else raw_token_bytes
+        payload = compress_payload(raw_token_bytes) if compress else raw_token_bytes
         self.chunks.append(Chunk(stream_id=1, timestamp_ms=timestamp_ms, data=payload))
 
     def write_to_file(self, file_path: str):
@@ -104,6 +158,8 @@ class TvidWriter:
             flags |= FLAG_HAS_VIDEO
         if self.metadata.has_audio:
             flags |= FLAG_HAS_AUDIO
+        if HAS_ZSTD:
+            flags |= FLAG_COMPRESSION_ZSTD
         buffer.write(struct.pack(">H", flags))
 
         # 4. Metadata JSON
@@ -184,7 +240,7 @@ class TvidReader:
         for _ in range(chunk_count):
             stream_id, timestamp_ms, payload_len = struct.unpack(">BII", stream.read(9))
             compressed_payload = stream.read(payload_len)
-            decompressed_payload = zlib.decompress(compressed_payload)
+            decompressed_payload = decompress_payload(compressed_payload)
 
             if stream_id == 0:
                 self.video_chunks.append((timestamp_ms, decompressed_payload))

@@ -46,27 +46,62 @@ def cmd_compress(args):
     audio_extensions = [".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"]
     video_extensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"]
 
+    is_video = False
+    compact_mode = getattr(args, "compact", False)
+    calculate_metrics = getattr(args, "metrics", False)
+
     if ext in audio_extensions:
         from src.audio import AudioLatentEngine
 
         engine = AudioLatentEngine(target_bandwidth=args.bandwidth)
         engine.compress_file(input_path, output_path)
     elif ext in video_extensions:
+        is_video = True
         from src.video import VideoLatentEngine
 
-        v_engine = VideoLatentEngine(gop_size=args.gop)
+        v_engine = VideoLatentEngine(gop_size=args.gop, compact=compact_mode)
         v_engine.compress_video(input_path, output_path)
     else:
         print(f"Warning: Unknown extension '{ext}'. Attempting video compression...", file=sys.stderr)
+        is_video = True
         from src.video import VideoLatentEngine
 
-        v_engine = VideoLatentEngine(gop_size=args.gop)
+        v_engine = VideoLatentEngine(gop_size=args.gop, compact=compact_mode)
         v_engine.compress_video(input_path, output_path)
 
     comp_size = os.path.getsize(output_path)
     elapsed = time.time() - start_time
     ratio = (orig_size / comp_size) if comp_size > 0 else 0.0
     savings = (1.0 - (comp_size / orig_size)) * 100 if orig_size > 0 else 0.0
+
+    psnr_score = None
+    if calculate_metrics and is_video:
+        import tempfile
+        import cv2
+        from src.video import compute_psnr
+        fd_tmp, tmp_rec = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd_tmp)
+        try:
+            v_engine.decompress_video(output_path, tmp_rec)
+            cap_orig = cv2.VideoCapture(input_path)
+            cap_rec = cv2.VideoCapture(tmp_rec)
+            psnrs = []
+            while True:
+                r1, f1 = cap_orig.read()
+                r2, f2 = cap_rec.read()
+                if not r1 or not r2:
+                    break
+                # Resize if minor dimension mismatch
+                if f1.shape != f2.shape:
+                    f2 = cv2.resize(f2, (f1.shape[1], f1.shape[0]))
+                psnrs.append(compute_psnr(f1, f2))
+            cap_orig.release()
+            cap_rec.release()
+            if psnrs:
+                psnr_score = float(sum(psnrs) / len(psnrs))
+        finally:
+            if os.path.exists(tmp_rec):
+                os.remove(tmp_rec)
 
     print("\n" + "=" * 52)
     print("           TRANSVID COMPRESSION REPORT")
@@ -77,6 +112,10 @@ def cmd_compress(args):
     print(f" Compressed Size  : {format_size(comp_size)}")
     print(f" Compression Ratio: {ratio:.1f}x smaller")
     print(f" Storage Reduction: {savings:.1f}%")
+    if is_video:
+        print(f" Mode             : {'Compact (16x latent pooling)' if compact_mode else 'Standard (8x TAESD crisp)'}")
+    if psnr_score is not None:
+        print(f" Fidelity (PSNR)  : {psnr_score:.2f} dB")
     print(f" Encoding Speed   : {elapsed:.2f} seconds")
     print("=" * 52)
 
@@ -167,6 +206,8 @@ def main():
     p_comp.add_argument("-o", "--output", help="Path to output .tvid file")
     p_comp.add_argument("--bandwidth", type=float, default=6.0, choices=[1.5, 3.0, 6.0, 12.0, 24.0], help="Target audio bandwidth in kbps (default: 6.0)")
     p_comp.add_argument("--gop", type=int, default=16, help="Video Group of Pictures (GOP) size for keyframing (default: 16)")
+    p_comp.add_argument("--compact", action="store_true", help="Enable 16x compact latent spatial pooling for extreme compression")
+    p_comp.add_argument("--metrics", action="store_true", help="Compute PSNR fidelity metric after compression")
     p_comp.set_defaults(func=cmd_compress)
 
     # Decompress

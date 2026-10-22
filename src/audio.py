@@ -14,7 +14,13 @@ import torch
 import torchaudio
 from encodec import EncodecModel
 
-from src.container import StreamMetadata, TvidReader, TvidWriter
+from src.container import (
+    StreamMetadata,
+    TvidReader,
+    TvidWriter,
+    pack_audio_tokens,
+    unpack_audio_tokens,
+)
 
 
 class AudioLatentEngine:
@@ -130,11 +136,7 @@ class AudioLatentEngine:
         )
 
         writer = TvidWriter(meta)
-        # Store tokens shape and raw bytes
-        # Header shape prefix (2x uint32: num_codebooks, time_steps) + uint16 payload
-        shape_header = np.array([num_codebooks, time_steps], dtype=np.uint32).tobytes()
-        payload = shape_header + tokens.tobytes()
-
+        payload = pack_audio_tokens(tokens)
         writer.add_audio_chunk(timestamp_ms=0, raw_token_bytes=payload, compress=True)
         writer.write_to_file(output_tvid_path)
 
@@ -146,10 +148,7 @@ class AudioLatentEngine:
 
         # Combine all audio chunks
         full_payload = reader.audio_chunks[0][1]
-        num_codebooks, time_steps = np.frombuffer(full_payload[:8], dtype=np.uint32)
-        raw_tokens_bytes = full_payload[8:]
-
-        tokens = np.frombuffer(raw_tokens_bytes, dtype=np.uint16).reshape((num_codebooks, time_steps))
+        tokens = unpack_audio_tokens(full_payload)
         reconstructed_wav, model_sr = self.decode_tokens(tokens)
 
         # If original was a different sample rate, we can optionally resample or save directly

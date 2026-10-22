@@ -37,4 +37,4 @@ dev = [
 transvid = "transvid.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "transvid"]

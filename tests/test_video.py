@@ -86,6 +86,34 @@ class TestVideoLatentEngine(unittest.TestCase):
         self.assertEqual(frames_read, self.num_frames)
         print(f"[Video Test] Successfully reconstructed all {frames_read} frames.")
 
+    def test_compact_video_and_psnr(self):
+        from src.video import compute_psnr
+
+        # Test compute_psnr with identical and noisy images
+        img1 = np.full((64, 64, 3), 128, dtype=np.uint8)
+        self.assertEqual(compute_psnr(img1, img1), float("inf"))
+
+        img2 = np.clip(img1.astype(np.int16) + 5, 0, 255).astype(np.uint8)
+        psnr_val = compute_psnr(img1, img2)
+        self.assertGreater(psnr_val, 30.0)
+
+        # Test compact 16x mode compression round-trip
+        compact_engine = VideoLatentEngine(gop_size=8, compact=True)
+        compact_tvid = "test_compact.tvid"
+        compact_mp4 = "test_compact_restored.mp4"
+        try:
+            compact_engine.compress_video(self.test_mp4_path, compact_tvid)
+            self.assertTrue(os.path.exists(compact_tvid))
+            reader = TvidReader(compact_tvid)
+            self.assertIn("compact", reader.metadata.video_codec)
+
+            compact_engine.decompress_video(compact_tvid, compact_mp4)
+            self.assertTrue(os.path.exists(compact_mp4))
+        finally:
+            for p in [compact_tvid, compact_mp4]:
+                if os.path.exists(p):
+                    os.remove(p)
+
 
 if __name__ == "__main__":
     unittest.main()

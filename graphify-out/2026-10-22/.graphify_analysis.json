@@ -1,13 +1,14 @@
 {
   "communities": {
     "0": [
+      "cv2",
       "dataclasses",
       "encodec",
-      "encodec_utils",
       "io",
       "json",
       "math",
       "numpy",
+      "os",
       "src_audio",
       "src_audio_rationale_1",
       "src_container",
@@ -15,18 +16,23 @@
       "struct",
       "tests_test_audio",
       "tests_test_audio_rationale_1",
+      "tests_test_container",
+      "tests_test_container_rationale_1",
+      "tests_test_video",
+      "tests_test_video_rationale_1",
       "torch",
       "torchaudio",
       "typing",
+      "unittest",
       "zlib"
     ],
     "1": [
       "binaryio",
-      "src_audio_audiolatentengine_compress_file",
-      "src_audio_rationale_109",
       "src_container_chunk",
+      "src_container_rationale_133",
       "src_container_rationale_74",
       "src_container_streammetadata",
+      "src_container_tvidreader",
       "src_container_tvidreader_init",
       "src_container_tvidreader_parse",
       "src_container_tvidwriter",
@@ -35,29 +41,74 @@
       "src_container_tvidwriter_init",
       "src_container_tvidwriter_write",
       "src_container_tvidwriter_write_to_file",
+      "src_video_rationale_179",
+      "src_video_videolatentengine_compress_video",
       "tests_test_container_testtvidcontainer",
       "tests_test_container_testtvidcontainer_test_container_roundtrip",
       "tests_test_container_testtvidcontainer_test_corrupted_crc_detection"
     ],
     "2": [
-      "ndarray",
       "src_audio_audiolatentengine",
+      "src_audio_audiolatentengine_compress_file",
       "src_audio_audiolatentengine_decode_tokens",
       "src_audio_audiolatentengine_decompress_file",
       "src_audio_audiolatentengine_encode_waveform",
       "src_audio_audiolatentengine_ensure_model_loaded",
       "src_audio_audiolatentengine_init",
-      "src_audio_rationale_135",
-      "src_audio_rationale_22",
-      "src_audio_rationale_25",
-      "src_audio_rationale_48",
-      "src_audio_rationale_87",
-      "tensor",
+      "src_audio_py_ndarray",
+      "src_audio_py_tensor",
+      "src_audio_rationale_116",
+      "src_audio_rationale_142",
+      "src_audio_rationale_21",
+      "src_audio_rationale_24",
+      "src_audio_rationale_47",
+      "src_audio_rationale_94",
       "tests_test_audio_testaudiolatentengine",
       "tests_test_audio_testaudiolatentengine_setupclass",
-      "tests_test_audio_testaudiolatentengine_teardownclass"
+      "tests_test_audio_testaudiolatentengine_teardownclass",
+      "tests_test_audio_testaudiolatentengine_test_compression_and_reconstruction"
     ],
     "3": [
+      "pathlib",
+      "sequential",
+      "shutil",
+      "src_video",
+      "src_video_build_decoder",
+      "src_video_build_encoder",
+      "src_video_clamp",
+      "src_video_clamp_forward",
+      "src_video_conv",
+      "src_video_rationale_1",
+      "src_video_resblock",
+      "src_video_resblock_forward",
+      "src_video_resblock_init",
+      "subprocess",
+      "tempfile",
+      "torch_hub",
+      "torch_nn",
+      "torch_nn_functional"
+    ],
+    "4": [
+      "src_video_py_ndarray",
+      "src_video_py_tensor",
+      "src_video_rationale_104",
+      "src_video_rationale_147",
+      "src_video_rationale_154",
+      "src_video_rationale_158",
+      "src_video_rationale_311",
+      "src_video_videolatentengine",
+      "src_video_videolatentengine_decompress_video",
+      "src_video_videolatentengine_dequantize_latent",
+      "src_video_videolatentengine_extract_audio_from_video",
+      "src_video_videolatentengine_init",
+      "src_video_videolatentengine_load_pretrained_weights",
+      "src_video_videolatentengine_quantize_latent",
+      "tests_test_video_testvideolatentengine",
+      "tests_test_video_testvideolatentengine_setupclass",
+      "tests_test_video_testvideolatentengine_teardownclass",
+      "tests_test_video_testvideolatentengine_test_video_compression_and_reconstruction"
+    ],
+    "5": [
       "argparse",
       "src_cli",
       "src_cli_cmd_compress",
@@ -66,66 +117,63 @@
       "src_cli_format_size",
       "src_cli_main",
       "src_cli_rationale_1",
-      "src_cli_rationale_19",
+      "src_cli_rationale_21",
       "sys",
       "time"
     ],
-    "4": [
-      "os",
-      "src_container_rationale_133",
-      "src_container_tvidreader",
-      "tests_test_audio_testaudiolatentengine_test_compression_and_reconstruction",
-      "tests_test_container",
-      "tests_test_container_rationale_1",
-      "unittest"
-    ],
-    "5": [
+    "6": [
       "src_init",
       "src_init_rationale_1"
     ],
-    "6": [
+    "7": [
       "pkg_transvid"
     ]
   },
   "cohesion": {
-    "0": 0.1503267973856209,
-    "1": 0.22794117647058823,
-    "2": 0.175,
-    "3": 0.38181818181818183,
-    "4": 0.2857142857142857,
-    "5": 1.0,
-    "6": 1.0
+    "0": 0.12318840579710146,
+    "1": 0.2222222222222222,
+    "2": 0.14619883040935672,
+    "3": 0.16339869281045752,
+    "4": 0.13725490196078433,
+    "5": 0.38181818181818183,
+    "6": 1.0,
+    "7": 1.0
   },
   "gods": [
     {
       "id": "src_container_tvidreader",
       "label": "TvidReader",
-      "degree": 15
+      "degree": 19
     },
     {
       "id": "src_audio_audiolatentengine",
       "label": "AudioLatentEngine",
-      "degree": 14
+      "degree": 18
+    },
+    {
+      "id": "src_video_videolatentengine",
+      "label": "VideoLatentEngine",
+      "degree": 16
     },
     {
       "id": "src_container_tvidwriter",
       "label": "TvidWriter",
-      "degree": 13
+      "degree": 15
     },
     {
       "id": "src_container_streammetadata",
       "label": "StreamMetadata",
-      "degree": 10
+      "degree": 12
     },
     {
       "id": "src_cli_cmd_compress",
       "label": "cmd_compress()",
-      "degree": 7
+      "degree": 9
     },
     {
       "id": "src_cli_cmd_decompress",
       "label": "cmd_decompress()",
-      "degree": 7
+      "degree": 9
     },
     {
       "id": "tests_test_container_testtvidcontainer",
@@ -133,22 +181,28 @@
       "degree": 6
     },
     {
-      "id": "src_cli_cmd_info",
-      "label": "cmd_info()",
-      "degree": 5
+      "id": "src_video_build_decoder",
+      "label": "build_decoder()",
+      "degree": 6
     },
     {
-      "id": "src_cli_main",
-      "label": "main()",
-      "degree": 5
-    },
-    {
-      "id": "tests_test_audio_testaudiolatentengine",
-      "label": "TestAudioLatentEngine",
+      "id": "tests_test_video_testvideolatentengine",
+      "label": "TestVideoLatentEngine",
       "degree": 5
     }
   ],
   "surprises": [
+    {
+      "source": "TestTvidContainer",
+      "target": "StreamMetadata",
+      "source_files": [
+        "tests/test_container.py",
+        "src/container.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    },
     {
       "source": "TestTvidContainer",
       "target": "TvidReader",
@@ -158,7 +212,7 @@
       ],
       "confidence": "INFERRED",
       "relation": "uses",
-      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
     },
     {
       "source": "TestTvidContainer",
@@ -172,11 +226,11 @@
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
     },
     {
-      "source": "TestTvidContainer",
-      "target": "StreamMetadata",
+      "source": "TestVideoLatentEngine",
+      "target": "VideoLatentEngine",
       "source_files": [
-        "tests/test_container.py",
-        "src/container.py"
+        "tests/test_video.py",
+        "src/video.py"
       ],
       "confidence": "INFERRED",
       "relation": "uses",
@@ -192,17 +246,6 @@
       "confidence": "INFERRED",
       "relation": "uses",
       "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
-    },
-    {
-      "source": "cmd_decompress()",
-      "target": "TvidReader",
-      "source_files": [
-        "src/cli.py",
-        "src/container.py"
-      ],
-      "confidence": "EXTRACTED",
-      "relation": "calls",
-      "why": "bridges separate communities"
     }
   ],
   "tokens": {

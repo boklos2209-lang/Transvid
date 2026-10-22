@@ -23,7 +23,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.hub import download_url_to_file
 
-from src.container import StreamMetadata, TvidReader, TvidWriter
+from src.container import (
+    StreamMetadata,
+    TvidReader,
+    TvidWriter,
+    pack_audio_tokens,
+    unpack_audio_tokens,
+)
+
+
+def compute_psnr(img1: np.ndarray, img2: np.ndarray) -> float:
+    """Computes Peak Signal-to-Noise Ratio (PSNR) in dB between two RGB images (0-255)."""
+    mse = float(np.mean((img1.astype(np.float64) - img2.astype(np.float64)) ** 2))
+    if mse == 0:
+        return float("inf")
+    return float(20.0 * np.log10(255.0 / np.sqrt(mse)))
 
 TAESD_ENCODER_URL = "https://github.com/madebyollin/taesd/raw/main/taesd_encoder.pth"
 TAESD_DECODER_URL = "https://github.com/madebyollin/taesd/raw/main/taesd_decoder.pth"
@@ -107,14 +121,14 @@ class VideoLatentEngine:
     compact latent pooling, dead-zone gating, and H.264/AAC output normalization.
     """
 
-    def __init__(self, device: Optional[str] = None, gop_size: int = 48, compact: bool = True):
+    def __init__(self, device: Optional[str] = None, gop_size: int = 48, compact: bool = False):
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
         else:
             self.device = device
 
         self.gop_size = gop_size
-        self.compact = compact  # 2x latent spatial pooling (16x overall downsampling)
+        self.compact = compact  # False = 8x TAESD (crisp text & fine textures); True = 16x compact pooling
 
         # Build models
         self.encoder = build_encoder(latent_channels=4).to(self.device)
@@ -229,8 +243,7 @@ class VideoLatentEngine:
             meta.codebook_count = num_codebooks
             meta.tokens_per_second = int(time_steps / max(a_dur, 0.001))
 
-            shape_header = np.array([num_codebooks, time_steps], dtype=np.uint32).tobytes()
-            audio_tokens_payload = shape_header + tokens.tobytes()
+            audio_tokens_payload = pack_audio_tokens(tokens)
             print(f"[+] Extracted & neural-encoded soundtrack: {time_steps} audio steps.")
 
         writer = TvidWriter(meta)
@@ -273,7 +286,9 @@ class VideoLatentEngine:
             if is_keyframe:
                 target_latent = latent
                 frame_type = 0  # Keyframe
-                prev_latent = latent
+                quantized, scale = self._quantize_latent(target_latent)
+                # Closed-loop tracking: decoder state matches dequantized reconstruction
+                prev_latent = self._dequantize_latent(quantized, scale)
             else:
                 diff = latent - prev_latent
                 mean_abs_diff = float(np.mean(np.abs(diff)))
@@ -291,9 +306,10 @@ class VideoLatentEngine:
                     gated_diff = np.where(np.abs(diff) < 0.06, 0.0, diff)
                     target_latent = gated_diff
                     frame_type = 1  # Delta frame
-                    prev_latent = latent
-
-            quantized, scale = self._quantize_latent(target_latent)
+                    quantized, scale = self._quantize_latent(target_latent)
+                    # Closed-loop tracking: accumulate dequantized delta exactly as decoder does
+                    rec_diff = self._dequantize_latent(quantized, scale)
+                    prev_latent = prev_latent + rec_diff
 
             # Header per chunk: [frame_type (uint8), scale (float32)] + raw int8 payload
             scale_bytes = np.float32(scale).tobytes()
@@ -378,10 +394,7 @@ class VideoLatentEngine:
             os.close(fd_a)
 
             full_payload = reader.audio_chunks[0][1]
-            num_codebooks, time_steps = np.frombuffer(full_payload[:8], dtype=np.uint32)
-            raw_tokens_bytes = full_payload[8:]
-
-            tokens = np.frombuffer(raw_tokens_bytes, dtype=np.uint16).reshape((num_codebooks, time_steps))
+            tokens = unpack_audio_tokens(full_payload)
             rec_wav, model_sr = a_engine.decode_tokens(tokens)
             import torchaudio
             torchaudio.save(temp_audio_path, rec_wav, model_sr)
