@@ -13,7 +13,6 @@ import numpy as np
 import torch
 import torchaudio
 from encodec import EncodecModel
-from encodec.utils import convert_audio
 
 from src.container import StreamMetadata, TvidReader, TvidWriter
 
@@ -55,20 +54,28 @@ class AudioLatentEngine:
         """
         self._ensure_model_loaded()
 
-        if wav.dim() == 2:
-            wav = wav.unsqueeze(0)  # [1, channels, time]
+        if wav.dim() == 3:
+            wav = wav.squeeze(0)
 
-        original_channels = wav.shape[1]
-        original_frames = wav.shape[2]
+        original_channels = wav.shape[0]
+        original_frames = wav.shape[1]
         duration_seconds = original_frames / sample_rate
 
-        # Resample and convert to mono 24kHz required by EnCodec 24kHz model
-        wav_24k = convert_audio(
-            wav,
-            sr=sample_rate,
-            target_sr=self.model.sample_rate,
-            target_channels=self.model.channels,
-        ).to(self.device)
+        # If stereo or multi-channel, downmix to mono [1, time]
+        if wav.shape[0] > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+
+        # Resample to model sample rate (24000 Hz)
+        if sample_rate != self.model.sample_rate:
+            resampler = torchaudio.transforms.Resample(
+                orig_freq=sample_rate, new_freq=self.model.sample_rate
+            )
+            wav_24k = resampler(wav)
+        else:
+            wav_24k = wav
+
+        # Encodec expects [batch, channels, time] with channels=1
+        wav_24k = wav_24k.unsqueeze(0).to(self.device)
 
         with torch.inference_mode():
             # frames is a list of tuples: [(codes, scale)]

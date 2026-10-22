@@ -31,7 +31,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/boklos2209-lang/Transvid.git
+git clone https://github.com/YOUR_USERNAME/Transvid.git
 cd Transvid
 
 # Install with pip / uv
