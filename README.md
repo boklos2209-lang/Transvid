@@ -1,6 +1,6 @@
 # ⚡ Transvid: Neural Latent Media Compression Machine
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/boklos2209-lang/Transvid/blob/master/notebooks/Transvid_Colab_Demo.ipynb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-brightgreen.svg)](https://python.org)
 
@@ -31,7 +31,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/Transvid.git
+git clone https://github.com/boklos2209-lang/Transvid.git
 cd Transvid
 
 # Install with pip / uv
