@@ -14,8 +14,8 @@
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Audio (Full Track)** | 4.73 MB (`Bruno.mp3`) | **183.4 KB** | **26.4x (96.2% cut)** | ~4.9s | High (EnCodec 24kHz RVQ) |
 | **Speech / Acoustic** | 352.8 KB (WAV) | **870 bytes** | **405x reduction** | <0.5s | Crystal clear playback |
-| **Video (High Fidelity)** | 1080p / 720p H.264 | `.tvid` (Closed-Loop DPCM) | **3x–6x** | Real-time | ~31+ dB PSNR |
-| **Video (Compact Mode)** | 1080p / 720p H.264 | `.tvid` (16x latent pooling) | **10x–15x** | Real-time | Efficient preview / mobile |
+| **HD Music Video (720p)** | 21.47 MB (`bruno.mp4`, 3m30s) | **9.63 MB** (`brunovid.tvid`) | **2.2x (55.1% cut)** | ~114s | **41.40 dB PSNR** (Restored MP4: **17.61 MB**) |
+| **Video (Compact Mode)** | 1080p / 720p H.264 | `.tvid` (`--compact`) | **4x–7x** | Fast | ~36+ dB PSNR |
 
 ---
 
