@@ -29,7 +29,7 @@ import io
 import json
 import struct
 import zlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from typing import BinaryIO, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -37,8 +37,12 @@ import numpy as np
 try:
     import zstandard as zstd
     HAS_ZSTD = True
+    _ZSTD_COMPRESSOR = zstd.ZstdCompressor(level=9)
+    _ZSTD_DECOMPRESSOR = zstd.ZstdDecompressor()
 except ImportError:
     HAS_ZSTD = False
+    _ZSTD_COMPRESSOR = None
+    _ZSTD_DECOMPRESSOR = None
 
 MAGIC = b"TVID"
 CURRENT_VERSION = 1
@@ -48,12 +52,11 @@ FLAG_HAS_AUDIO = 1 << 1
 FLAG_COMPRESSION_ZSTD = 1 << 2
 
 
-def compress_payload(raw_bytes: bytes, level: int = 6) -> bytes:
+def compress_payload(raw_bytes: bytes, level: int = 9) -> bytes:
     """Compresses chunk payload with Zstandard if available, else zlib."""
-    if HAS_ZSTD:
-        cctx = zstd.ZstdCompressor(level=level)
-        return cctx.compress(raw_bytes)
-    return zlib.compress(raw_bytes, level=level)
+    if HAS_ZSTD and _ZSTD_COMPRESSOR is not None:
+        return _ZSTD_COMPRESSOR.compress(raw_bytes)
+    return zlib.compress(raw_bytes, level=min(level, 9))
 
 
 def decompress_payload(payload: bytes) -> bytes:
@@ -63,10 +66,9 @@ def decompress_payload(payload: bytes) -> bytes:
     if len(payload) <= 1:
         return payload
 
-    if HAS_ZSTD and payload.startswith(b"\x28\xb5\x2f\xfd"):
+    if HAS_ZSTD and _ZSTD_DECOMPRESSOR is not None and payload.startswith(b"\x28\xb5\x2f\xfd"):
         try:
-            dctx = zstd.ZstdDecompressor()
-            return dctx.decompress(payload)
+            return _ZSTD_DECOMPRESSOR.decompress(payload)
         except Exception:
             pass
 
@@ -103,6 +105,7 @@ class StreamMetadata:
     fps: float = 0.0
     total_frames: int = 0
     latent_shape: Tuple[int, ...] = ()
+    temporal_stride: int = 1
 
     # Audio metadata
     has_audio: bool = False
@@ -115,6 +118,7 @@ class StreamMetadata:
     # General info
     title: str = ""
     duration_seconds: float = 0.0
+    source_size_bytes: int = 0
 
 
 @dataclass
@@ -231,7 +235,9 @@ class TvidReader:
         (meta_len,) = struct.unpack(">I", stream.read(4))
         meta_bytes = stream.read(meta_len)
         meta_dict = json.loads(meta_bytes.decode("utf-8"))
-        self.metadata = StreamMetadata(**meta_dict)
+        valid_keys = {f.name for f in fields(StreamMetadata)}
+        filtered_meta = {k: v for k, v in meta_dict.items() if k in valid_keys}
+        self.metadata = StreamMetadata(**filtered_meta)
 
         # 5. Chunk Count
         (chunk_count,) = struct.unpack(">I", stream.read(4))

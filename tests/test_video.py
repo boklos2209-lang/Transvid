@@ -57,6 +57,9 @@ class TestVideoLatentEngine(unittest.TestCase):
 
         comp_size = os.path.getsize(self.test_tvid_path)
         print(f"\n[Video Test] Original MP4: {orig_size} bytes | Compressed TVID: {comp_size} bytes")
+        self.assertLess(comp_size, orig_size, "Compressed .tvid must be smaller than original .mp4")
+        self.assertIsNotNone(self.engine.last_psnr)
+        self.assertTrue(np.isfinite(self.engine.last_psnr))
 
         # 2. Verify container metadata
         reader = TvidReader(self.test_tvid_path)

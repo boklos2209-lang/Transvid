@@ -75,33 +75,8 @@ def cmd_compress(args):
     savings = (1.0 - (comp_size / orig_size)) * 100 if orig_size > 0 else 0.0
 
     psnr_score = None
-    if calculate_metrics and is_video:
-        import tempfile
-        import cv2
-        from src.video import compute_psnr
-        fd_tmp, tmp_rec = tempfile.mkstemp(suffix=".mp4")
-        os.close(fd_tmp)
-        try:
-            v_engine.decompress_video(output_path, tmp_rec)
-            cap_orig = cv2.VideoCapture(input_path)
-            cap_rec = cv2.VideoCapture(tmp_rec)
-            psnrs = []
-            while True:
-                r1, f1 = cap_orig.read()
-                r2, f2 = cap_rec.read()
-                if not r1 or not r2:
-                    break
-                # Resize if minor dimension mismatch
-                if f1.shape != f2.shape:
-                    f2 = cv2.resize(f2, (f1.shape[1], f1.shape[0]))
-                psnrs.append(compute_psnr(f1, f2))
-            cap_orig.release()
-            cap_rec.release()
-            if psnrs:
-                psnr_score = float(sum(psnrs) / len(psnrs))
-        finally:
-            if os.path.exists(tmp_rec):
-                os.remove(tmp_rec)
+    if is_video and getattr(v_engine, "last_psnr", None) is not None:
+        psnr_score = v_engine.last_psnr
 
     print("\n" + "=" * 52)
     print("           TRANSVID COMPRESSION REPORT")
@@ -113,7 +88,7 @@ def cmd_compress(args):
     print(f" Compression Ratio: {ratio:.1f}x smaller")
     print(f" Storage Reduction: {savings:.1f}%")
     if is_video:
-        print(f" Mode             : {'Compact (16x latent pooling)' if compact_mode else 'Standard (8x TAESD crisp)'}")
+        print(f" Mode             : {'Ultra-Compact (3D GOP 24x)' if compact_mode else 'Standard 3D GOP (16x HD)'}")
     if psnr_score is not None:
         print(f" Fidelity (PSNR)  : {psnr_score:.2f} dB")
     print(f" Encoding Speed   : {elapsed:.2f} seconds")
